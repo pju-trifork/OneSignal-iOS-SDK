@@ -142,15 +142,7 @@ static OneSignalLocation* singleInstance = nil;
         }
     }
     else {
-        
-        //Check if always granted
-        if( (int)[NSClassFromString(@"CLLocationManager") performSelector:@selector(authorizationStatus)] == 3) {
-            [OneSignalLocation beginTask];
-            [sendLocationTimer invalidate];
-            sendLocationTimer = [NSTimer scheduledTimerWithTimeInterval:adjustedTime target:self selector:@selector(sendLocation) userInfo:nil repeats:NO];
-            [[NSRunLoop mainRunLoop] addTimer:sendLocationTimer forMode:NSRunLoopCommonModes];
-        }
-        else sendLocationTimer = NULL;
+        sendLocationTimer = NULL;
     }
 }
 
@@ -165,129 +157,11 @@ static OneSignalLocation* singleInstance = nil;
     fcTask = UIBackgroundTaskInvalid;
 }
 
-
-
 + (void)internalGetLocation:(bool)prompt {
     if ([self started])
         return;
-    
-    id clLocationManagerClass = NSClassFromString(@"CLLocationManager");
-    
-    // Check for location in plist
-    if (![clLocationManagerClass performSelector:@selector(locationServicesEnabled)])
-        return;
-    int permissionStatus = [clLocationManagerClass performSelector:@selector(authorizationStatus)];
-    // return if permission not determined and should not prompt
-    if (permissionStatus == 0 && !prompt)
-        return;
-    
-    locationManager = [[clLocationManagerClass alloc] init];
-    [locationManager setValue:[self sharedInstance] forKey:@"delegate"];
-    
-    if ([OneSignalHelper isIOSVersionGreaterThanOrEqual:@"8.0"]) {
-        
-        //Check info plist for request descriptions
-        //LocationAlways > LocationWhenInUse > No entry (Log error)
-        //Location Always requires: Location Background Mode + NSLocationAlwaysUsageDescription
-        NSArray* backgroundModes = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"UIBackgroundModes"];
-        NSString* alwaysDescription = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"NSLocationAlwaysUsageDescription"] ?: [[NSBundle mainBundle] objectForInfoDictionaryKey:@"NSLocationAlwaysAndWhenInUseUsageDescription"];
-        // use background location updates if always permission granted or prompt allowed
-        if (backgroundModes && [backgroundModes containsObject:@"location"] && alwaysDescription && (permissionStatus == 3 || prompt)) {
-            [locationManager performSelector:@selector(requestAlwaysAuthorization)];
-            if ([OneSignalHelper isIOSVersionGreaterThanOrEqual:@"9.0"]) {
-                [locationManager setValue:@YES forKey:@"allowsBackgroundLocationUpdates"];
-            }
-        }
-        
-        else if ([[NSBundle mainBundle] objectForInfoDictionaryKey:@"NSLocationWhenInUseUsageDescription"]) {
-            if (permissionStatus == 0) [locationManager performSelector:@selector(requestWhenInUseAuthorization)];
-        }
-        
-        else onesignal_Log(ONE_S_LL_ERROR, @"Include a privacy NSLocationAlwaysUsageDescription or NSLocationWhenInUseUsageDescription in your info.plist to request location permissions.");
-    }
-        
-    // For iOS 6 and 7, location services are prompted here
-    // This method is also used for getting the location manager to obtain an initial location fix
-    // and will notify your delegate by calling its locationManager:didUpdateLocations: method
-    [locationManager performSelector:@selector(startUpdatingLocation)];
-    
     started = true;
 }
-
-#pragma mark CLLocationManagerDelegate
-
-- (void)locationManager:(id)manager didUpdateLocations:(NSArray *)locations {
-    
-    // return if the user has not granted privacy permissions or location shared is false
-    if ([OneSignal requiresUserPrivacyConsent] || ![OneSignal isLocationShared])
-        return;
-    
-    [manager performSelector:@selector(stopUpdatingLocation)];
-    
-    id location = locations.lastObject;
-    
-    SEL cord_selector = NSSelectorFromString(@"coordinate");
-    os_location_coordinate cords;
-    NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:[[location class] instanceMethodSignatureForSelector:cord_selector]];
-    
-    [invocation setTarget:locations.lastObject];
-    [invocation setSelector:cord_selector];
-    [invocation invoke];
-    [invocation getReturnValue:&cords];
-    
-    @synchronized(OneSignalLocation.mutexObjectForLastLocation) {
-        if (!lastLocation)
-            lastLocation = (os_last_location*)malloc(sizeof(os_last_location));
-        
-        lastLocation->verticalAccuracy = [[location valueForKey:@"verticalAccuracy"] doubleValue];
-        lastLocation->horizontalAccuracy = [[location valueForKey:@"horizontalAccuracy"] doubleValue];
-        lastLocation->cords = cords;
-    }
-    
-    if(!sendLocationTimer)
-        [OneSignalLocation resetSendTimer];
-    
-    if(!initialLocationSent)
-        [OneSignalLocation sendLocation];
-
-}
-
--(void)locationManager:(id)manager didFailWithError:(NSError *)error {
-    [OneSignal onesignal_Log:ONE_S_LL_ERROR message:[NSString stringWithFormat:@"CLLocationManager did fail with error: %@", error]];
-}
-
-+ (void)resetSendTimer {
-    NSTimeInterval requiredWaitTime = [UIApplication sharedApplication].applicationState == UIApplicationStateActive ? foregroundSendLocationWaitTime : backgroundSendLocationWaitTime ;
-    sendLocationTimer = [NSTimer scheduledTimerWithTimeInterval:requiredWaitTime target:self selector:@selector(sendLocation) userInfo:nil repeats:NO];
-}
-
-+ (void)sendLocation {
-    
-    // return if the user has not granted privacy permissions
-    if ([OneSignal requiresUserPrivacyConsent])
-        return;
-    
-    @synchronized(OneSignalLocation.mutexObjectForLastLocation) {
-        if (!lastLocation || ![OneSignal mUserId]) return;
-        
-        //Fired from timer and not initial location fetched
-        if (initialLocationSent)
-            [OneSignalLocation resetSendTimer];
-        
-        initialLocationSent = YES;
-        
-        NSMutableDictionary *requests = [NSMutableDictionary new];
-        
-        if ([OneSignal mEmailUserId])
-            requests[@"email"] = [OSRequestSendLocation withUserId:[OneSignal mEmailUserId] appId:[OneSignal app_id] location:lastLocation networkType:[OneSignalHelper getNetType] backgroundState:([UIApplication sharedApplication].applicationState != UIApplicationStateActive) emailAuthHashToken:[OneSignal mEmailAuthToken]];
-        
-        requests[@"push"] = [OSRequestSendLocation withUserId:[OneSignal mUserId] appId:[OneSignal app_id] location:lastLocation networkType:[OneSignalHelper getNetType] backgroundState:([UIApplication sharedApplication].applicationState != UIApplicationStateActive) emailAuthHashToken:nil];
-        
-        [OneSignalClient.sharedClient executeSimultaneousRequests:requests withSuccess:nil onFailure:nil];
-    }
-    
-}
-
 
 #pragma clang diagnostic pop
 #pragma GCC diagnostic pop

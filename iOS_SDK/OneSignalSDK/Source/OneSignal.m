@@ -1637,9 +1637,6 @@ static dispatch_queue_t serialQueue;
             if (tagsToSend)
                 [self performSelector:@selector(sendTagsToServer) withObject:nil afterDelay:5];
             
-            // try to send location
-            [OneSignalLocation sendLocation];
-            
             if (emailToSet) {
                 [OneSignal syncHashedEmail:emailToSet];
                 emailToSet = nil;

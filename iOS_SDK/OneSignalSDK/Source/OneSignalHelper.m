@@ -535,7 +535,7 @@ static NSString *_lastMessageIdFromAction;
     return notification;
 }
 
-//Shared instance as OneSignal is delegate of UNUserNotificationCenterDelegate and CLLocationManagerDelegate
+//Shared instance as OneSignal is delegate of UNUserNotificationCenterDelegate
 static OneSignal* singleInstance = nil;
 +(OneSignal*)sharedInstance {
     @synchronized( singleInstance ) {
